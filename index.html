@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>固定プロンプト付き NLP チャットサイト</title>
+  <!-- 指定のNLP.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@nlpjs/nlp@5.0.0-alpha.5/src/index.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f4f4f4;
+      margin: 0;
+      padding: 20px;
+    }
+    h1 { text-align: center; }
+
+    /* チャット部分 */
+    #chat-container {
+      background-color: #fff;
+      max-width: 600px;
+      margin: 0 auto;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    #chat-output {
+      flex: 1;
+      padding: 10px;
+      height: 300px;
+      overflow-y: auto;
+    }
+    #chat-input {
+      border: none;
+      border-top: 1px solid #ccc;
+      padding: 15px;
+      font-size: 1rem;
+      outline: none;
+    }
+    .message {
+      margin: 5px 0;
+      padding: 8px 10px;
+      border-radius: 4px;
+    }
+    .user {
+      background-color: #e1f5fe;
+      align-self: flex-end;
+    }
+    .bot {
+      background-color: #ffecb3;
+      align-self: flex-start;
+    }
+    /* ファインチューニング部分 */
+    #tuning-container {
+      background-color: #fff;
+      max-width: 600px;
+      margin: 20px auto 0 auto;
+      padding: 15px;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    #tuning-container input, #tuning-container button {
+      margin: 5px 0;
+      padding: 8px;
+      width: 100%;
+      box-sizing: border-box;
+    }
+  </style>
+</head>
+<body>
+  <h1>NLP チャットサイト</h1>
+
+  <!-- チャット部分 -->
+  <div id="chat-container">
+    <div id="chat-output"></div>
+    <input type="text" id="chat-input" placeholder="メッセージを入力してください…" autofocus>
+  </div>
+
+  <!-- ファインチューニング部分 -->
+  <div id="tuning-container">
+    <h2>ファインチューニング用入力</h2>
+    <input type="text" id="tuning-intent" placeholder="インテント名 (例: greetings.hello)">
+    <input type="text" id="tuning-phrase" placeholder="トレーニングフレーズ (例: こんにちは)">
+    <input type="text" id="tuning-answer" placeholder="回答 (例: やあ、元気？)">
+    <button id="add-training">学習データ追加＆再学習</button>
+    <p id="tuning-status"></p>
+  </div>
+
+  <script>
+    // NLP.js の NlpManager を利用。日本語と英語の両言語を対象にする。
+    const { NlpManager } = window.nlp;
+    const manager = new NlpManager({ languages: ['ja', 'en'], forceNER: true });
+    
+    // ===== 固定プロンプト =====
+    // 以下の学習データは「どの会話にも的確に反応し、相手の会話の言語に合わせ、
+    // 気さくに友人と話すように対応する」という固定プロンプトのもとに学習させるための例です。
+    
+    // -- 日本語 --
+    // 挨拶
+    manager.addDocument('ja', 'こんにちは', 'greetings.hello');
+    manager.addDocument('ja', 'もしもし', 'greetings.hello');
+    manager.addAnswer('ja', 'greetings.hello', 'やあ、元気？何かあった？');
+    
+    // 元気状態の確認
+    manager.addDocument('ja', '元気ですか', 'greetings.howareyou');
+    manager.addAnswer('ja', 'greetings.howareyou', '元気だよ！君はどう？');
+    
+    // 名前問い合わせ
+    manager.addDocument('ja', 'あなたの名前は', 'bot.name');
+    manager.addAnswer('ja', 'bot.name', '俺は君の友達、気さくなチャットボットさ。');
+    
+    // -- 英語 --
+    // Greetings
+    manager.addDocument('en', 'hello', 'greetings.hello');
+    manager.addDocument('en', 'hi', 'greetings.hello');
+    manager.addAnswer('en', 'greetings.hello', 'Hey there, how’s it going?');
+    
+    // How are you?
+    manager.addDocument('en', 'how are you', 'greetings.howareyou');
+    manager.addAnswer('en', 'greetings.howareyou', 'I\'m doing great! How about you?');
+    
+    // Name inquiry
+    manager.addDocument('en', "what's your name", 'bot.name');
+    manager.addAnswer('en', 'bot.name', 'I\'m your friendly chat buddy.');
+    
+    // 共通のファイルバック（どんな質問にも友人らしく返す）
+    manager.addDocument('ja', '.*', 'fallback');
+    manager.addAnswer('ja', 'fallback', 'うーん、もう少し詳しく教えてくれる？');
+    manager.addDocument('en', '.*', 'fallback');
+    manager.addAnswer('en', 'fallback', 'Hmm, can you tell me a bit more?');
+
+    // ===== 初期学習処理 =====
+    async function trainModel() {
+      document.getElementById('tuning-status').textContent = '学習中…';
+      await manager.train();
+      manager.save(); // クライアント上での保存（必要に応じて）
+      document.getElementById('tuning-status').textContent = '学習完了！';
+      // 初回学習完了時の初期応答表示（自動で日本語にするが、実際はユーザー入力に応じ判定）
+      displayMessage("bot", "やあ、元気？何か話そうよ！");
+    }
+    trainModel().catch(console.error);
+
+    // ===== 言語自動判定 =====
+    // 入力テキストに日本語（ひらがな・カタカナ・漢字）が含まれていれば'ja'、なければ'en'
+    function detectLanguage(text) {
+      const japaneseRegex = /[\u3040-\u30FF\u4E00-\u9FFF]/;
+      return japaneseRegex.test(text) ? 'ja' : 'en';
+    }
+
+    // ===== チャットUI動作 =====
+    document.getElementById("chat-input").addEventListener("keydown", async function(e) {
+      if (e.key === "Enter" && this.value.trim() !== "") {
+        const message = this.value;
+        displayMessage("user", message);
+        // 自動言語判定により、現在の会話言語を決定
+        const lang = detectLanguage(message);
+        const response = await manager.process(lang, message);
+        displayMessage("bot", response.answer || (lang === 'ja' ? "ごめん、わかんないや…" : "Sorry, I didn't get that..."));
+        this.value = "";
+      }
+    });
+
+    // ===== ファインチューニング：追加学習＆再学習 =====
+    document.getElementById("add-training").addEventListener("click", async function() {
+      // 追加学習では、ユーザーが入力した意図・フレーズ・回答をそのまま学習データとして追加する。
+      const intent = document.getElementById("tuning-intent").value.trim();
+      const phrase = document.getElementById("tuning-phrase").value.trim();
+      const answer = document.getElementById("tuning-answer").value.trim();
+      if (!intent || !phrase || !answer) {
+        document.getElementById("tuning-status").textContent = "全ての項目を入力してください。";
+        return;
+      }
+      // 入力の言語は、トレーニングフレーズから自動判定
+      const lang = detectLanguage(phrase);
+      manager.addDocument(lang, phrase, intent);
+      manager.addAnswer(lang, intent, answer);
+      await trainModel();
+      // 入力欄をクリア
+      document.getElementById("tuning-intent").value = "";
+      document.getElementById("tuning-phrase").value = "";
+      document.getElementById("tuning-answer").value = "";
+    });
+
+    // ===== メッセージ表示用関数 =====
+    function displayMessage(sender, message) {
+      const chatOutput = document.getElementById("chat-output");
+      const messageDiv = document.createElement("div");
+      messageDiv.classList.add("message", sender);
+      messageDiv.textContent = sender + ": " + message;
+      chatOutput.appendChild(messageDiv);
+      chatOutput.scrollTop = chatOutput.scrollHeight;
+    }
+  </script>
+</body>
+</html>
